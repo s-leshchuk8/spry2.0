@@ -131,7 +131,7 @@ test-back: .env ## Backend tests (starts the db container, creates meetings_test
 	docker compose exec -T db psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -tAc \
 	  "SELECT 1 FROM pg_database WHERE datname = 'meetings_test'" | grep -q 1 || \
 	  docker compose exec -T db psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c "CREATE DATABASE meetings_test"
-	cd back && TEST_DATABASE_URL=$(TEST_DB_URL) uv run pytest -q
+	cd backend && TEST_DATABASE_URL=$(TEST_DB_URL) uv run pytest -q
 
 .PHONY: test-front
 test-front: ## Frontend tests
@@ -139,13 +139,13 @@ test-front: ## Frontend tests
 
 .PHONY: lint
 lint: ## Code style checks (same as CI)
-	cd back && uv run ruff check . && uv run ruff format --check .
+	cd backend && uv run ruff check . && uv run ruff format --check .
 	cd front && npm run lint && npm run format:check && npm run typecheck
 	uvx cfn-lint infra/*.yaml
 
 .PHONY: format
 format: ## Auto-format backend and frontend
-	cd back && uv run ruff check --fix . && uv run ruff format .
+	cd backend && uv run ruff check --fix . && uv run ruff format .
 	cd front && npm run format
 
 ##@ AWS backend (Lambda + Aurora Serverless v2 via CloudFormation)
@@ -174,8 +174,8 @@ aws-backend-login: ## Log Docker in to ECR
 
 .PHONY: aws-backend-push
 aws-backend-push: aws-backend-login ## Build the Lambda image for linux/$(ARCH) and push it with tag $(TAG)
-	docker buildx build --platform linux/$(ARCH) --provenance=false -f back/Dockerfile.lambda \
-	  -t $(ECR_URI):$(TAG) -t $(ECR_URI):latest --push back
+	docker buildx build --platform linux/$(ARCH) --provenance=false -f backend/Dockerfile.lambda \
+	  -t $(ECR_URI):$(TAG) -t $(ECR_URI):latest --push backend
 
 .PHONY: aws-backend-stack
 aws-backend-stack: ## Create/update the backend stack (VPC, Aurora, Lambda) with image tag $(TAG); KEEP_IMAGE=1 keeps the current image
@@ -378,4 +378,6 @@ deploy-frontend: build-frontend
 
 deploy-backend:
 	@echo "Building backend Docker image..."
-	docker build -t spry-backend ./back
+	docker build -t spry-backend ./backend
+
+-include Makefile.reports

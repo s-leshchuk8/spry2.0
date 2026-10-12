@@ -1,0 +1,61 @@
+# Weekly meetings report (AWS). Included from the main Makefile with:  -include Makefile.reports
+# Needs in .env:  REPORT_EMAIL=you@example.com   (optional: REPORT_DOMAIN=your.domain for DKIM)
+
+REPORT_STACK     := $(PROJECT)-reports
+REPORT_QUEUE_URL  = $(call stack_output,$(REPORT_STACK),ReportQueueUrl)
+REPORT_DLQ_URL    = $(call stack_output,$(REPORT_STACK),DlqUrl)
+REPORT_BUCKET     = $(call stack_output,$(REPORT_STACK),BucketName)
+REPORT_SCHEDULE  ?= cron(0 7 ? * MON *)
+REPORT_SCRIPT_ENV = PROJECT=$(PROJECT) BACKEND_FUNCTION=$(BACKEND_FUNCTION) REPORT_EMAIL="$(REPORT_EMAIL)" \
+	                REPORT_DOMAIN="$(REPORT_DOMAIN)" REPORT_LAMBDA_ARCH=$(LAMBDA_ARCH) \
+	                REPORT_SCHEDULE="$(REPORT_SCHEDULE)"
+
+##@ Weekly report
+
+.PHONY: report-deploy
+report-deploy: aws-check aws-backend-push ## Build+push the image, deploy the reports stack, copy DB env from the API (use ARCH=amd64 on a PC)
+	$(REPORT_SCRIPT_ENV) BUILDER_IMAGE_URI=$(ECR_URI):$(TAG) infra/scripts/report-deploy.sh
+
+.PHONY: report-stack
+report-stack: aws-check ## Re-deploy only the infrastructure with the image already in use (no build)
+	$(REPORT_SCRIPT_ENV) infra/scripts/report-deploy.sh
+
+.PHONY: report-schedule
+report-schedule: aws-check ## Change the schedule: make report-schedule REPORT_SCHEDULE='rate(5 minutes)'
+	$(REPORT_SCRIPT_ENV) infra/scripts/report-deploy.sh
+
+.PHONY: report-now
+report-now: ## Queue a report build on demand: make report-now WEEK=2026-W40
+	@test -n "$(WEEK)" || { echo "Usage: make report-now WEEK=2026-W40"; exit 1; }
+	@q="$(REPORT_QUEUE_URL)"; test -n "$$q" || { echo "Stack $(REPORT_STACK) not found: run make report-deploy"; exit 1; }; \
+	$(AWS_SHELL) sqs send-message --queue-url "$$q" --message-body '{"week": "$(WEEK)", "source": "make"}'
+
+.PHONY: report-logs
+report-logs: ## Last 15 minutes of builder and mailer logs
+	@echo "--- builder ---"; $(AWS_SHELL) logs tail /aws/lambda/$(PROJECT)-report-builder --since 15m || true
+	@echo "--- mailer ---";  $(AWS_SHELL) logs tail /aws/lambda/$(PROJECT)-report-mailer --since 15m || true
+
+.PHONY: report-ls
+report-ls: ## List the reports in S3 (for the submission)
+	$(AWS_SHELL) s3 ls s3://$(REPORT_BUCKET)/reports/ --recursive
+
+.PHONY: report-dlq
+report-dlq: ## How many messages are waiting in the main queue and in the DLQ
+	@$(AWS_SHELL) sqs get-queue-attributes --queue-url "$(REPORT_QUEUE_URL)" --attribute-names ApproximateNumberOfMessages --query Attributes --output text | sed 's/^/queue: /'
+	@$(AWS_SHELL) sqs get-queue-attributes --queue-url "$(REPORT_DLQ_URL)" --attribute-names ApproximateNumberOfMessages --query Attributes --output text | sed 's/^/dlq:   /'
+
+.PHONY: report-break
+report-break: ## DLQ experiment: make the builder fail for one week: make report-break WEEK=2026-W38
+	@test -n "$(WEEK)" || { echo "Usage: make report-break WEEK=2026-W38"; exit 1; }
+	PROJECT=$(PROJECT) BACKEND_FUNCTION=$(BACKEND_FUNCTION) infra/scripts/report-env.sh set FAIL_WEEK=$(WEEK)
+
+.PHONY: report-fix
+report-fix: ## Remove the forced failure
+	PROJECT=$(PROJECT) BACKEND_FUNCTION=$(BACKEND_FUNCTION) infra/scripts/report-env.sh unset FAIL_WEEK
+
+.PHONY: report-destroy
+report-destroy: aws-check ## Empty the reports bucket and delete the reports stack
+	@read -p "Delete stack $(REPORT_STACK) and all reports? [y/N] " ok && [ "$$ok" = y ]
+	@b="$(REPORT_BUCKET)"; [ -z "$$b" ] || $(AWS_SHELL) s3 rm "s3://$$b" --recursive --quiet
+	aws cloudformation delete-stack --stack-name $(REPORT_STACK)
+	aws cloudformation wait stack-delete-complete --stack-name $(REPORT_STACK)
