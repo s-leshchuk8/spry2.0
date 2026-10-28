@@ -381,3 +381,5 @@ deploy-backend:
 	docker build -t spry-backend ./backend
 
 -include Makefile.reports
+-include Makefile.ai
+

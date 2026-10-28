@@ -1,0 +1,95 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Paste-an-agenda parser - a Lambda function URL outside the VPC that calls Bedrock
+
+Parameters:
+  ProjectName:
+    Type: String
+    Description: Lowercase project name (used in resource names)
+  ImageUri:
+    Type: String
+    Description: Backend container image URI (same image as the API)
+  Architecture:
+    Type: String
+    Default: x86_64
+    AllowedValues: [x86_64, arm64]
+  CorsOrigins:
+    Type: CommaDelimitedList
+    Description: Browser origins allowed to call the URL (the same list the API allows)
+
+Resources:
+  AgendaParserRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: call-bedrock
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # "*" for now; narrowing it to one model is a discussion question.
+              - Effect: Allow
+                Action: bedrock-mantle:CreateInference     # Anthropic Messages API
+                Resource: "*"
+              - Effect: Allow
+                Action: [bedrock:InvokeModel, bedrock:InvokeModelWithResponseStream]  # Converse API
+                Resource: "*"
+      Tags:
+        - { Key: PROJECT_NAME, Value: !Ref ProjectName }
+
+  AgendaParserFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${ProjectName}-agenda-parser
+      PackageType: Image
+      Architectures: [!Ref Architecture]
+      Code:
+        ImageUri: !Ref ImageUri
+      ImageConfig:
+        Command: ["app.ai.agenda_lambda.handler"]
+      Role: !GetAtt AgendaParserRole.Arn
+      Timeout: 30
+      MemorySize: 512
+      # No VpcConfig: this function needs no database.
+      # Environment (Cognito settings, PARSER_*) is set by infra/scripts/ai-deploy.sh.
+      Tags:
+        - { Key: PROJECT_NAME, Value: !Ref ProjectName }
+
+  AgendaParserUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !GetAtt AgendaParserFunction.Arn
+      AuthType: NONE          # the handler verifies the Cognito token itself
+      Cors:
+        AllowOrigins: !Ref CorsOrigins
+        AllowMethods: [POST]
+        AllowHeaders: [content-type, authorization]
+        MaxAge: 600
+
+  UrlInvokeUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AgendaParserFunction
+      Action: lambda:InvokeFunctionUrl
+      Principal: "*"
+      FunctionUrlAuthType: NONE
+
+  UrlInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AgendaParserFunction
+      Action: lambda:InvokeFunction
+      Principal: "*"
+      InvokedViaFunctionUrl: true
+
+Outputs:
+  ParserUrl:
+    Value: !GetAtt AgendaParserUrl.FunctionUrl
+  FunctionName:
+    Value: !Ref AgendaParserFunction

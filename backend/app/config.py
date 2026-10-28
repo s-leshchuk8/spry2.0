@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+    PARSER_MODEL: str = "us.amazon.nova-micro-v1:0"
 
 
 settings = Settings()
+
+
+PARSER_MODEL: str = "us.amazon.nova-micro-v1:0"
