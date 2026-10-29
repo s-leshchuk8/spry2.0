@@ -14,7 +14,7 @@ services:
       retries: 10
 
   backend:
-    build: ./back
+    build: ./backend
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       CORS_ORIGINS: ${CORS_ORIGINS}
@@ -35,12 +35,13 @@ services:
     # files in .dockerignore are skipped.
     develop:
       watch:
-        - { action: rebuild, path: ./back }
+        - { action: rebuild, path: ./backend }
 
   frontend:
     build:
       context: ./front
       args:
+        VITE_AGENDA_PARSER_URL: ${VITE_AGENDA_PARSER_URL:-}
         VITE_COGNITO_REGION: ${COGNITO_REGION:-us-east-1}
         VITE_COGNITO_USER_POOL_ID: ${COGNITO_USER_POOL_ID:-}
         VITE_COGNITO_CLIENT_ID: ${COGNITO_CLIENT_ID:-}

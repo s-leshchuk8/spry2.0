@@ -1,0 +1,195 @@
+{
+  "status": "ok",
+  "database": "meetings",
+  "transaction_read_only": true,
+  "tables": [
+    {
+      "table_name": "agendas",
+      "table_type": "BASE TABLE"
+    },
+    {
+      "table_name": "alembic_version",
+      "table_type": "BASE TABLE"
+    },
+    {
+      "table_name": "meetings",
+      "table_type": "BASE TABLE"
+    }
+  ],
+  "alembic_revisions": [
+    "0004_reviewed_agendas"
+  ],
+  "columns": [
+    {
+      "table_name": "agendas",
+      "column_name": "meeting_id",
+      "data_type": "uuid",
+      "udt_name": "uuid",
+      "is_nullable": "NO",
+      "column_default": null
+    },
+    {
+      "table_name": "agendas",
+      "column_name": "final_agenda",
+      "data_type": "json",
+      "udt_name": "json",
+      "is_nullable": "NO",
+      "column_default": null
+    },
+    {
+      "table_name": "agendas",
+      "column_name": "ai_suggestion",
+      "data_type": "jsonb",
+      "udt_name": "jsonb",
+      "is_nullable": "YES",
+      "column_default": null
+    },
+    {
+      "table_name": "alembic_version",
+      "column_name": "version_num",
+      "data_type": "character varying",
+      "udt_name": "varchar",
+      "is_nullable": "NO",
+      "column_default": null
+    },
+    {
+      "table_name": "meetings",
+      "column_name": "id",
+      "data_type": "uuid",
+      "udt_name": "uuid",
+      "is_nullable": "NO",
+      "column_default": "gen_random_uuid()"
+    },
+    {
+      "table_name": "meetings",
+      "column_name": "title",
+      "data_type": "character varying",
+      "udt_name": "varchar",
+      "is_nullable": "NO",
+      "column_default": null
+    },
+    {
+      "table_name": "meetings",
+      "column_name": "description",
+      "data_type": "text",
+      "udt_name": "text",
+      "is_nullable": "YES",
+      "column_default": null
+    },
+    {
+      "table_name": "meetings",
+      "column_name": "call_link",
+      "data_type": "character varying",
+      "udt_name": "varchar",
+      "is_nullable": "YES",
+      "column_default": null
+    },
+    {
+      "table_name": "meetings",
+      "column_name": "place",
+      "data_type": "character varying",
+      "udt_name": "varchar",
+      "is_nullable": "YES",
+      "column_default": null
+    },
+    {
+      "table_name": "meetings",
+      "column_name": "created_at",
+      "data_type": "timestamp with time zone",
+      "udt_name": "timestamptz",
+      "is_nullable": "NO",
+      "column_default": "now()"
+    },
+    {
+      "table_name": "meetings",
+      "column_name": "updated_at",
+      "data_type": "timestamp with time zone",
+      "udt_name": "timestamptz",
+      "is_nullable": "NO",
+      "column_default": "now()"
+    },
+    {
+      "table_name": "meetings",
+      "column_name": "starts_at",
+      "data_type": "timestamp with time zone",
+      "udt_name": "timestamptz",
+      "is_nullable": "NO",
+      "column_default": null
+    },
+    {
+      "table_name": "meetings",
+      "column_name": "ends_at",
+      "data_type": "timestamp with time zone",
+      "udt_name": "timestamptz",
+      "is_nullable": "NO",
+      "column_default": null
+    },
+    {
+      "table_name": "meetings",
+      "column_name": "owner_id",
+      "data_type": "uuid",
+      "udt_name": "uuid",
+      "is_nullable": "YES",
+      "column_default": null
+    }
+  ],
+  "constraints": [
+    {
+      "table_name": "agendas",
+      "constraint_name": "agendas_meeting_id_fkey",
+      "constraint_type": "f",
+      "validated": true,
+      "definition": "FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE"
+    },
+    {
+      "table_name": "agendas",
+      "constraint_name": "agendas_pkey",
+      "constraint_type": "p",
+      "validated": true,
+      "definition": "PRIMARY KEY (meeting_id)"
+    },
+    {
+      "table_name": "alembic_version",
+      "constraint_name": "alembic_version_pkc",
+      "constraint_type": "p",
+      "validated": true,
+      "definition": "PRIMARY KEY (version_num)"
+    },
+    {
+      "table_name": "meetings",
+      "constraint_name": "meetings_owner_id_fkey",
+      "constraint_type": "f",
+      "validated": true,
+      "definition": "FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE"
+    },
+    {
+      "table_name": "meetings",
+      "constraint_name": "meetings_pkey",
+      "constraint_type": "p",
+      "validated": true,
+      "definition": "PRIMARY KEY (id)"
+    }
+  ],
+  "indexes": [
+    {
+      "table_name": "agendas",
+      "index_name": "agendas_pkey",
+      "definition": "CREATE UNIQUE INDEX agendas_pkey ON public.agendas USING btree (meeting_id)"
+    },
+    {
+      "table_name": "meetings",
+      "index_name": "ix_meetings_owner_id",
+      "definition": "CREATE INDEX ix_meetings_owner_id ON public.meetings USING btree (owner_id)"
+    },
+    {
+      "table_name": "meetings",
+      "index_name": "ix_meetings_starts_at",
+      "definition": "CREATE INDEX ix_meetings_starts_at ON public.meetings USING btree (starts_at)"
+    },
+    {
+      "table_name": "meetings",
+      "index_name": "meetings_pkey",
+      "definition": "CREATE UNIQUE INDEX meetings_pkey ON public.meetings USING btree (id)"
+    }
+  ]
+}

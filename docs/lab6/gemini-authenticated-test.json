@@ -1,0 +1,19 @@
+{
+  "user_confirmed_editable_suggestions": true,
+  "matching_parse_events": [
+    {
+      "timestamp": 1793307639463,
+      "event": "agenda_parsed",
+      "model": "gemini-3.5-flash-lite",
+      "prompt_version": "agenda-v2-gemini",
+      "input_tokens": 124,
+      "output_tokens": 88,
+      "latency_ms": 1831,
+      "cost_usd": 0.0,
+      "billing_tier": "free",
+      "outcome": "success"
+    }
+  ],
+  "additional_inference_triggered_by_assistant": false,
+  "meeting_created_or_saved_by_test": false
+}

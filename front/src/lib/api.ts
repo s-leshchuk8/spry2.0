@@ -1,5 +1,6 @@
 import { getIdToken, signOut } from "@/lib/auth"
 import type {
+  SavedAgenda,
   Meeting,
   MeetingCreate,
   Participant,
@@ -66,6 +67,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  getAgenda: (id: string) => request<SavedAgenda | null>(`/meetings/${id}/agenda`),
+  saveAgenda: (id: string, data: SavedAgenda) =>
+    request<SavedAgenda>(`/meetings/${id}/agenda`, { method: "POST", body: JSON.stringify(data) }),
   getMe: () => request<User>("/me"),
 
   listMeetings: () => request<Meeting[]>("/meetings"),

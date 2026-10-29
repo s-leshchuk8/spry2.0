@@ -12,6 +12,8 @@ from pydantic import (
     model_validator,
 )
 
+from app.ai.contracts import ParsedAgenda
+
 
 def _blank_to_none(value: object) -> object:
     if isinstance(value, str) and not value.strip():
@@ -100,3 +102,14 @@ class MeetingRead(BaseModel):
     owner_id: UUID | None
     participants: list[ParticipantRead]
     created_at: datetime
+
+
+class AISuggestion(BaseModel):
+    agenda: ParsedAgenda
+    model: str = Field(min_length=1, max_length=200)
+    prompt_version: str = Field(min_length=1, max_length=100)
+
+
+class AgendaSave(BaseModel):
+    final_agenda: ParsedAgenda
+    ai_suggestion: AISuggestion | None = None

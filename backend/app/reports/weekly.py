@@ -7,18 +7,36 @@ The table/column names are detected from the database, so this works with
 your schema as long as it has a meetings table with a start time and either
 an end time or a duration.
 """
+
 import csv
 import io
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta
 
 from sqlalchemy import Interval, inspect, text
 
 TABLE_CANDIDATES = ("meetings", "meeting")
-START_CANDIDATES = ("starts_at", "start_time", "start_at", "started_at", "start",
-                    "begin_at", "scheduled_at", "date_time", "datetime", "start_date", "date")
+START_CANDIDATES = (
+    "starts_at",
+    "start_time",
+    "start_at",
+    "started_at",
+    "start",
+    "begin_at",
+    "scheduled_at",
+    "date_time",
+    "datetime",
+    "start_date",
+    "date",
+)
 END_CANDIDATES = ("ends_at", "end_time", "end_at", "ended_at", "end", "finish_at", "end_date")
-DURATION_CANDIDATES = ("duration_minutes", "duration_min", "duration_mins", "duration",
-                       "duration_seconds", "duration_hours")
+DURATION_CANDIDATES = (
+    "duration_minutes",
+    "duration_min",
+    "duration_mins",
+    "duration",
+    "duration_seconds",
+    "duration_hours",
+)
 TITLE_CANDIDATES = ("title", "name", "subject", "topic")
 PARTICIPANT_WORDS = ("participant", "attendee", "member", "guest")
 
@@ -40,7 +58,7 @@ def _get_engine():
 
 
 def previous_iso_week(today: date | None = None) -> str:
-    today = today or datetime.now(timezone.utc).date()
+    today = today or datetime.now(UTC).date()
     year, week, _ = (today - timedelta(days=7)).isocalendar()
     return f"{year}-W{week:02d}"
 
@@ -102,8 +120,10 @@ def _detect(engine) -> dict:
             continue
         for fk in insp.get_foreign_keys(t):
             if fk["referred_table"] == table:
-                participants = (f"(SELECT count(*) FROM {q(t)} p "
-                                f"WHERE p.{q(fk['constrained_columns'][0])} = m.{q(fk['referred_columns'][0])})")
+                participants = (
+                    f"(SELECT count(*) FROM {q(t)} p "
+                    f"WHERE p.{q(fk['constrained_columns'][0])} = m.{q(fk['referred_columns'][0])})"
+                )
                 break
         if participants != "NULL":
             break
@@ -120,8 +140,10 @@ def _detect(engine) -> dict:
 def _totals(conn, s: dict, week: str) -> tuple[int, float]:
     d0, d1 = week_bounds(week)
     row = conn.execute(
-        text(f"SELECT count(*) AS n, coalesce(sum({s['minutes']}), 0) / 60.0 AS hours "
-             f"FROM {s['from']} WHERE {s['start']} >= :a AND {s['start']} < :b"),
+        text(
+            f"SELECT count(*) AS n, coalesce(sum({s['minutes']}), 0) / 60.0 AS hours "
+            f"FROM {s['from']} WHERE {s['start']} >= :a AND {s['start']} < :b"
+        ),
         {"a": datetime.combine(d0, time.min), "b": datetime.combine(d1, time.min)},
     ).one()
     return int(row.n), float(row.hours)
@@ -136,10 +158,12 @@ def build_weekly_report(week: str) -> bytes:
         n, hours = _totals(conn, s, week)
         pn, phours = _totals(conn, s, shift_week(week, -7))
         longest = conn.execute(
-            text(f"SELECT {s['title']} AS title, {s['start']} AS starts, "
-                 f"{s['minutes']} AS minutes, {s['participants']} AS participants "
-                 f"FROM {s['from']} WHERE {s['start']} >= :a AND {s['start']} < :b "
-                 f"ORDER BY minutes DESC NULLS LAST LIMIT 5"),
+            text(
+                f"SELECT {s['title']} AS title, {s['start']} AS starts, "
+                f"{s['minutes']} AS minutes, {s['participants']} AS participants "
+                f"FROM {s['from']} WHERE {s['start']} >= :a AND {s['start']} < :b "
+                f"ORDER BY minutes DESC NULLS LAST LIMIT 5"
+            ),
             {"a": datetime.combine(d0, time.min), "b": datetime.combine(d1, time.min)},
         ).all()
 
@@ -155,8 +179,9 @@ def build_weekly_report(week: str) -> bytes:
     w.writerow(["title", "start", "duration_minutes", "participants"])
     for r in longest:
         starts = r.starts.isoformat() if hasattr(r.starts, "isoformat") else str(r.starts)
-        w.writerow([r.title, starts, round(float(r.minutes or 0)),
-                    "" if r.participants is None else r.participants])
+        w.writerow(
+            [r.title, starts, round(float(r.minutes or 0)), "" if r.participants is None else r.participants]
+        )
     return out.getvalue().encode("utf-8")
 
 

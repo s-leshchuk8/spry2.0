@@ -1,6 +1,7 @@
 """report-builder Lambda handler. Triggered by SQS (schedule / make report-now)
 or by a direct invoke. Image Command: app.reports.lambda_handler.handler
 """
+
 import json
 import logging
 import os
@@ -38,7 +39,8 @@ def handler(event, context):
         raise RuntimeError(f"forced failure for {week}")
 
     key = report_key(week)
-    s3.put_object(Bucket=os.environ["REPORTS_BUCKET"], Key=key,
-                  Body=build_weekly_report(week), ContentType="text/csv")
+    s3.put_object(
+        Bucket=os.environ["REPORTS_BUCKET"], Key=key, Body=build_weekly_report(week), ContentType="text/csv"
+    )
     log.info("report-builder saved key=%s", key)
     return {"week": week, "key": key}

@@ -1,9 +1,11 @@
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { toast } from "sonner"
 import { z } from "zod"
 
+import { AgendaDialog } from "@/components/AgendaDialog"
+import { SavedAgendaSection } from "@/components/SavedAgendaSection"
 import { ParticipantsMultiSelect } from "@/components/ParticipantsMultiSelect"
 import { Button } from "@/components/ui/button"
 import {
@@ -25,9 +27,9 @@ import {
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { useCreateMeeting, useUpdateMeeting } from "@/hooks/useMeetings"
-import { ApiError } from "@/lib/api"
+import { api, ApiError } from "@/lib/api"
 import { toDateInput, toTimeInput } from "@/lib/calendar"
-import type { Meeting, MeetingCreate } from "@/types"
+import type { Meeting, MeetingCreate, SavedAgenda } from "@/types"
 
 const meetingSchema = z
   .object({
@@ -117,7 +119,22 @@ export function MeetingFormDialog({
 }: MeetingFormDialogProps) {
   const createMeeting = useCreateMeeting()
   const updateMeeting = useUpdateMeeting()
-  const saving = createMeeting.isPending || updateMeeting.isPending
+  const [agendaOpen, setAgendaOpen] = useState(false)
+  const [agendaDraft, setAgendaDraft] = useState<SavedAgenda | null>(null)
+  const [savingAgenda, setSavingAgenda] = useState(false)
+  const [agendaError, setAgendaError] = useState("")
+  const [created, setCreated] = useState<Meeting | null>(null)
+  const saving = createMeeting.isPending || updateMeeting.isPending || savingAgenda
+  const close = (next: boolean) => {
+    if (saving) return
+    if (!next) {
+      setAgendaOpen(false)
+      setAgendaDraft(null)
+      setAgendaError("")
+      setCreated(null)
+    }
+    onOpenChange(next)
+  }
   const form = useForm<MeetingFormValues>({
     resolver: zodResolver(meetingSchema),
     defaultValues: meeting ? meetingValues(meeting) : emptyValues(initialStart),
@@ -137,16 +154,32 @@ export function MeetingFormDialog({
       ends_at: new Date(`${values.date}T${values.end_time}`).toISOString(),
       participant_ids: values.participants.map((p) => p.id),
     }
+    let target = created
+    setSavingAgenda(true)
+    setAgendaError("")
     try {
       if (meeting) {
         await updateMeeting.mutateAsync({ id: meeting.id, data })
         toast.success("Meeting updated")
       } else {
-        await createMeeting.mutateAsync(data)
-        toast.success("Meeting created")
+        if (target) {
+          await updateMeeting.mutateAsync({ id: target.id, data })
+        } else {
+          target = await createMeeting.mutateAsync(data)
+          setCreated(target)
+        }
+        if (agendaDraft) await api.saveAgenda(target.id, agendaDraft)
+        toast.success(agendaDraft ? "Meeting and agenda created" : "Meeting created")
       }
+      setCreated(null)
+      setAgendaDraft(null)
       onOpenChange(false)
     } catch (error) {
+      if (target && agendaDraft) {
+        setAgendaError(
+          "The meeting exists, but its agenda could not be saved. Retry Create meeting to save it without creating a duplicate, or open the meeting’s agenda later.",
+        )
+      }
       if (error instanceof ApiError && error.status === 422 && error.issues.length > 0) {
         for (const issue of error.issues) {
           const field = API_FIELD_TO_FORM[String(issue.loc[1])]
@@ -157,151 +190,195 @@ export function MeetingFormDialog({
       toast.error(
         error instanceof Error ? error.message : `Could not ${meeting ? "save" : "create"} meeting`,
       )
+    } finally {
+      setSavingAgenda(false)
     }
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>{meeting ? "Edit meeting" : "New meeting"}</DialogTitle>
-          <DialogDescription>
-            Add a call link, a place, or both so people know where to go.
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      <Dialog open={open && !agendaOpen} onOpenChange={close}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{meeting ? "Edit meeting" : "New meeting"}</DialogTitle>
+            <DialogDescription>
+              Add a call link, a place, or both so people know where to go.
+            </DialogDescription>
+          </DialogHeader>
 
-        <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4" noValidate>
-            <FormField
-              control={form.control}
-              name="title"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Title</FormLabel>
-                  <FormControl>
-                    <Input placeholder="Sprint planning" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <div className="grid gap-4 sm:grid-cols-[1.4fr_1fr_1fr]">
-              <FormField
-                control={form.control}
-                name="date"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Date</FormLabel>
-                    <FormControl>
-                      <Input type="date" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="start_time"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Start</FormLabel>
-                    <FormControl>
-                      <Input type="time" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="end_time"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>End</FormLabel>
-                    <FormControl>
-                      <Input type="time" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
-            <FormField
-              control={form.control}
-              name="description"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Description</FormLabel>
-                  <FormControl>
-                    <Textarea placeholder="What is this meeting about?" rows={3} {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="participants"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Participants</FormLabel>
-                  <FormControl>
-                    <ParticipantsMultiSelect value={field.value} onChange={field.onChange} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <div className="grid gap-4 sm:grid-cols-2">
-              <FormField
-                control={form.control}
-                name="call_link"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Call link</FormLabel>
-                    <FormControl>
-                      <Input type="url" placeholder="https://meet.google.com/…" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="place"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Place</FormLabel>
-                    <FormControl>
-                      <Input placeholder="Room 204" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
-
-            {form.formState.errors.root && (
-              <p className="text-sm text-destructive">{form.formState.errors.root.message}</p>
-            )}
-
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-                Cancel
+          {meeting && <SavedAgendaSection key={meeting.id} meetingId={meeting.id} />}
+          {!meeting && (
+            <div className="space-y-2 rounded border bg-muted/30 p-3">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setAgendaOpen(true)}
+                disabled={saving}
+              >
+                Paste agenda / AI parser
               </Button>
-              <Button type="submit" disabled={saving}>
-                {meeting
-                  ? saving
-                    ? "Saving…"
-                    : "Save changes"
-                  : saving
-                    ? "Creating…"
-                    : "Create meeting"}
-              </Button>
-            </DialogFooter>
-          </form>
-        </Form>
-      </DialogContent>
-    </Dialog>
+              <p className="text-sm text-muted-foreground">
+                Paste notes, parse with AI, and review suggestions before creating your meeting. You
+                can also fill in the fields manually.
+              </p>
+              {agendaDraft && (
+                <p role="status" className="text-sm">
+                  Reviewed agenda attached. Check the meeting date and time, then click Create
+                  meeting to save both.
+                </p>
+              )}
+            </div>
+          )}
+          {agendaError && (
+            <p role="alert" className="text-sm text-destructive">
+              {agendaError}
+            </p>
+          )}
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4" noValidate>
+              <FormField
+                control={form.control}
+                name="title"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Title</FormLabel>
+                    <FormControl>
+                      <Input placeholder="Sprint planning" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <div className="grid gap-4 sm:grid-cols-[1.4fr_1fr_1fr]">
+                <FormField
+                  control={form.control}
+                  name="date"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Date</FormLabel>
+                      <FormControl>
+                        <Input type="date" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="start_time"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Start</FormLabel>
+                      <FormControl>
+                        <Input type="time" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="end_time"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>End</FormLabel>
+                      <FormControl>
+                        <Input type="time" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+              <FormField
+                control={form.control}
+                name="description"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Description</FormLabel>
+                    <FormControl>
+                      <Textarea placeholder="What is this meeting about?" rows={3} {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="participants"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Participants</FormLabel>
+                    <FormControl>
+                      <ParticipantsMultiSelect value={field.value} onChange={field.onChange} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <div className="grid gap-4 sm:grid-cols-2">
+                <FormField
+                  control={form.control}
+                  name="call_link"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Call link</FormLabel>
+                      <FormControl>
+                        <Input type="url" placeholder="https://meet.google.com/…" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="place"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Place</FormLabel>
+                      <FormControl>
+                        <Input placeholder="Room 204" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              {form.formState.errors.root && (
+                <p className="text-sm text-destructive">{form.formState.errors.root.message}</p>
+              )}
+
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => close(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={saving}>
+                  {meeting
+                    ? saving
+                      ? "Saving…"
+                      : "Save changes"
+                    : saving
+                      ? "Creating…"
+                      : "Create meeting"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
+      {open && agendaOpen && (
+        <AgendaDialog
+          initialDraft={agendaDraft ?? undefined}
+          onClose={() => setAgendaOpen(false)}
+          onConfirm={(draft) => {
+            setAgendaDraft(draft)
+            if (draft.final_agenda.title)
+              form.setValue("title", draft.final_agenda.title, { shouldValidate: true })
+            setAgendaOpen(false)
+          }}
+        />
+      )}
+    </>
   )
 }

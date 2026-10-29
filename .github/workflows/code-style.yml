@@ -18,17 +18,20 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: back
+        working-directory: backend
     steps:
       - uses: actions/checkout@v4
 
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-          cache-dependency-glob: back/pyproject.toml
+          cache-dependency-glob: backend/pyproject.toml
 
       - name: Install dev dependencies
         run: uv sync --python 3.12
+
+      - name: Offline parser tests
+        run: uv run pytest -q
 
       - name: Lint
         run: uv run ruff check --output-format=github .
@@ -60,6 +63,9 @@ jobs:
       - name: Check formatting
         run: npm run format:check
 
+      - name: Frontend tests
+        run: npm test
+
       - name: Type check
         run: npm run typecheck
 
@@ -72,4 +78,4 @@ jobs:
       - uses: astral-sh/setup-uv@v6
 
       - name: Lint CloudFormation templates
-        run: uvx cfn-lint --format parseable infra/*.yaml
+        run: uvx cfn-lint --format parseable infra/*.yaml infra/*.yml

@@ -1,0 +1,78 @@
+{
+  "observed_at_utc": "2026-10-29T21:12:19.923435+00:00",
+  "account": "891447916595",
+  "profile": "spry-friend",
+  "region": "us-east-1",
+  "stack_status": "UPDATE_COMPLETE",
+  "parser": {
+    "function": "meetings-agenda-parser",
+    "status": "Active",
+    "last_update": "Successful",
+    "architecture": [
+      "arm64"
+    ],
+    "timeout_seconds": 30,
+    "memory_mb": 512,
+    "vpc_subnets": [],
+    "image": "891447916595.dkr.ecr.us-east-1.amazonaws.com/meetings-backend@sha256:9d97bc4d661c2acb60f5838d9dcd3a2c73598c3a1ba1ff2a98b28b3544744397",
+    "model": "gemini-3.5-flash-lite",
+    "mock": "0",
+    "prompt": "agenda-v2-gemini",
+    "billing": "free",
+    "secret_arn_only": true,
+    "url": "https://3vbrnjgxdcbbrxlfmih6f3sxcy0nvbwb.lambda-url.us-east-1.on.aws/",
+    "cors": {
+      "AllowHeaders": [
+        "content-type",
+        "authorization"
+      ],
+      "AllowMethods": [
+        "POST"
+      ],
+      "AllowOrigins": [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "https://d17yxyt8by6ov0.cloudfront.net"
+      ],
+      "MaxAge": 600
+    }
+  },
+  "budget": {
+    "name": "meetings-monthly-5usd",
+    "limit": {
+      "Amount": "5.0",
+      "Unit": "USD"
+    },
+    "notifications": [
+      {
+        "NotificationType": "ACTUAL",
+        "ComparisonOperator": "GREATER_THAN",
+        "Threshold": 100.0,
+        "NotificationState": "OK",
+        "email_subscribers": 1
+      },
+      {
+        "NotificationType": "ACTUAL",
+        "ComparisonOperator": "GREATER_THAN",
+        "Threshold": 80.0,
+        "NotificationState": "OK",
+        "email_subscribers": 1
+      }
+    ]
+  },
+  "parse_events": [
+    {
+      "timestamp": 1793307639463,
+      "event": "agenda_parsed",
+      "model": "gemini-3.5-flash-lite",
+      "prompt_version": "agenda-v2-gemini",
+      "input_tokens": 124,
+      "output_tokens": 88,
+      "latency_ms": 1831,
+      "cost_usd": 0.0,
+      "billing_tier": "free",
+      "outcome": "success"
+    }
+  ],
+  "model_invocations_by_this_script": 0
+}

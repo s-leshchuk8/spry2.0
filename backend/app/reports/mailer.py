@@ -1,5 +1,5 @@
-import os
 import logging
+import os
 from email.message import EmailMessage
 from urllib.parse import unquote_plus
 
@@ -28,7 +28,9 @@ def handler(event, context):
         msg["To"] = ", ".join(to)
         msg.set_content("Hello! Your weekly meetings report is attached.")
         msg.add_attachment(body, maintype="text", subtype="csv", filename=name)
-        ses.send_email(Content={"Raw": {"Data": msg.as_bytes()}},
-                       FromEmailAddress=os.environ["SENDER"],
-                       Destination={"ToAddresses": to})
+        ses.send_email(
+            Content={"Raw": {"Data": msg.as_bytes()}},
+            FromEmailAddress=os.environ["SENDER"],
+            Destination={"ToAddresses": to},
+        )
         log.info("report-mailer sent key=%s to=%s", key, to)

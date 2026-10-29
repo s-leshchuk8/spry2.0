@@ -44,3 +44,31 @@ export interface ValidationIssue {
   msg: string
   type: string
 }
+
+export interface AgendaItem {
+  topic: string
+  owner: string | null
+  minutes: number | null
+}
+export interface ActionItem {
+  task: string
+  owner: string | null
+  due: string | null
+}
+export interface ParsedAgenda {
+  title: string | null
+  starts_at: string | null
+  duration_minutes: number | null
+  items: AgendaItem[]
+  action_items: ActionItem[]
+  language: string
+}
+export interface AISuggestion {
+  agenda: ParsedAgenda
+  model: string
+  prompt_version: string
+}
+export interface SavedAgenda {
+  final_agenda: ParsedAgenda
+  ai_suggestion: AISuggestion | null
+}

@@ -53,10 +53,14 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
-    PARSER_MODEL: str = "us.amazon.nova-micro-v1:0"
+
+    PARSER_MODEL: str = "gemini-3.5-flash-lite"
+    parser_mock: bool = False
+    parser_region: str = "us-east-1"
+    parser_price_multiplier: float = 1.0
+    parser_prompt_version: str = "agenda-v2-gemini"
+    gemini_api_key_secret_arn: str = ""
+    parser_billing_tier: str = "free"
 
 
 settings = Settings()
-
-
-PARSER_MODEL: str = "us.amazon.nova-micro-v1:0"

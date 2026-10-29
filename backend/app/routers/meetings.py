@@ -5,8 +5,8 @@ from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
 from app.db import get_db
-from app.models import User
-from app.schemas import MeetingCreate, MeetingRead
+from app.models import Agenda, User
+from app.schemas import AgendaSave, MeetingCreate, MeetingRead
 from app.services import meetings as service
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
@@ -43,3 +43,27 @@ def update_meeting(
 def delete_meeting(meeting_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     service.delete_meeting(db, meeting_id, user)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/{meeting_id}/agenda", response_model=AgendaSave | None)
+def get_agenda(meeting_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    service.get_meeting(db, meeting_id, user)
+    agenda = db.get(Agenda, meeting_id)
+    if agenda is None:
+        return None
+    return AgendaSave(final_agenda=agenda.final_agenda, ai_suggestion=agenda.ai_suggestion)
+
+
+@router.post("/{meeting_id}/agenda", response_model=AgendaSave)
+def save_agenda(
+    meeting_id: UUID, data: AgendaSave, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    service.get_meeting(db, meeting_id, user)
+    agenda = db.get(Agenda, meeting_id)
+    if agenda is None:
+        agenda = Agenda(meeting_id=meeting_id)
+        db.add(agenda)
+    agenda.final_agenda = data.final_agenda.model_dump(mode="json")
+    agenda.ai_suggestion = data.ai_suggestion.model_dump(mode="json") if data.ai_suggestion else None
+    db.commit()
+    return data

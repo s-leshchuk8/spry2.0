@@ -58,9 +58,15 @@ function useNow(): Date {
 interface MeetingActions {
   onEdit: (meeting: Meeting) => void
   onDelete: (meeting: Meeting) => void
+  onAgenda: (meeting: Meeting) => void
 }
 
-function MeetingDetails({ meeting, onEdit, onDelete }: { meeting: Meeting } & MeetingActions) {
+function MeetingDetails({
+  meeting,
+  onEdit,
+  onDelete,
+  onAgenda,
+}: { meeting: Meeting } & MeetingActions) {
   const start = new Date(meeting.starts_at)
   return (
     <div className="space-y-3 text-sm">
@@ -89,6 +95,9 @@ function MeetingDetails({ meeting, onEdit, onDelete }: { meeting: Meeting } & Me
         <Clock className="size-4 shrink-0" />
         {formatLongDay(start)}, {formatTime(meeting.starts_at)} – {formatTime(meeting.ends_at)}
       </p>
+      <Button variant="outline" onClick={() => onAgenda(meeting)}>
+        View / edit agenda
+      </Button>
       {meeting.description && <p className="whitespace-pre-line">{meeting.description}</p>}
       {meeting.place && (
         <p className="flex items-center gap-2">
@@ -121,7 +130,12 @@ function MeetingDetails({ meeting, onEdit, onDelete }: { meeting: Meeting } & Me
   )
 }
 
-function MeetingBlock({ segment, onEdit, onDelete }: { segment: DaySegment } & MeetingActions) {
+function MeetingBlock({
+  segment,
+  onEdit,
+  onDelete,
+  onAgenda,
+}: { segment: DaySegment } & MeetingActions) {
   const [open, setOpen] = useState(false)
   const { meeting, startMin, endMin, column, columns } = segment
   // Close the details before handing over to the edit or delete dialog.
@@ -158,6 +172,7 @@ function MeetingBlock({ segment, onEdit, onDelete }: { segment: DaySegment } & M
       <PopoverContent className="w-80" align="start">
         <MeetingDetails
           meeting={meeting}
+          onAgenda={closeThen(onAgenda)}
           onEdit={closeThen(onEdit)}
           onDelete={closeThen(onDelete)}
         />
@@ -177,6 +192,7 @@ export function MeetingsCalendar({
   onEdit,
   onDelete,
   onCreateAt,
+  onAgenda,
 }: MeetingsCalendarProps) {
   const [view, setView] = useState<CalendarView>(initialView)
   const [anchor, setAnchor] = useState(() => new Date())
@@ -320,6 +336,7 @@ export function MeetingsCalendar({
                       segment={segment}
                       onEdit={onEdit}
                       onDelete={onDelete}
+                      onAgenda={onAgenda}
                     />
                   ))}
 

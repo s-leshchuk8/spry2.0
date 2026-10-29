@@ -12,6 +12,9 @@ export $(shell sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' .env 2>/dev/null)
 # ---------------------------------------------------------------------------
 # Settings (override on the command line, e.g. `make aws-deploy ARCH=amd64`)
 # ---------------------------------------------------------------------------
+AWS_PROFILE ?= spry-friend
+export AWS_PROFILE
+
 PROJECT     ?= meetings
 # Everything is deployed to us-east-1: CloudFront takes custom-domain certificates only from there.
 # (Set here, not in .env; `make … AWS_REGION=…` still overrides it for the backend.)
@@ -50,8 +53,8 @@ HASH        := \#
 COMMA       := ,
 # $(shell) does not inherit exported variables in GNU make < 4.4 (macOS ships 3.81),
 # so AWS lookups inside $(shell) load .env themselves.
-LOAD_ENV    := set -a; [ -f .env ] && . ./.env; set +a; export AWS_REGION=$(AWS_REGION) AWS_DEFAULT_REGION=$(AWS_REGION);
-AWS_SHELL   := $(LOAD_ENV) aws
+LOAD_ENV    := set -a; [ -f .env ] && . ./.env; set +a; export AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION) AWS_DEFAULT_REGION=$(AWS_REGION);
+AWS_SHELL   := $(LOAD_ENV) aws --profile $(AWS_PROFILE) --region $(AWS_REGION)
 # Recursive (=) so they are looked up only when a recipe needs them, after the stacks exist.
 stack_output = $(shell $(AWS_SHELL) cloudformation describe-stacks --stack-name $(1) \
                  --query "Stacks[0].Outputs[?OutputKey=='$(2)'].OutputValue" --output text 2>/dev/null)
@@ -74,12 +77,10 @@ FRONTEND_ZONE_ID  = $(shell $(LOAD_ENV) $(CERT_SH) zone-id $(FRONTEND_DOMAIN) 2>
 # The custom domain is attached once its certificate is issued; until then only the CloudFront domain serves.
 FRONTEND_DOMAIN_ARGS = $(if $(FRONTEND_CERT_ARN),CertificateArn=$(FRONTEND_CERT_ARN) DomainName=$(FRONTEND_DOMAIN) HostedZoneId=$(FRONTEND_ZONE_ID))
 
-# A stack whose first create failed is left in ROLLBACK_COMPLETE (holding no resources) and can't be
-# updated; delete it so the next deploy creates it again.
+# Failed stack recovery is a separately reviewed action; deployment never deletes a stack.
 define clear_failed_stack
 	@if [ "$$(aws cloudformation describe-stacks --stack-name $(1) --query 'Stacks[0].StackStatus' --output text 2>/dev/null)" = ROLLBACK_COMPLETE ]; then \
-	  echo "Stack $(1) is in ROLLBACK_COMPLETE after a failed create; deleting it before deploying again"; \
-	  aws cloudformation delete-stack --stack-name $(1) && aws cloudformation wait stack-delete-complete --stack-name $(1); \
+	  echo "Stack $(1) is ROLLBACK_COMPLETE. Inspect it and approve cleanup separately; no deletion performed."; exit 1; \
 	fi
 endef
 
@@ -93,7 +94,7 @@ TEST_DB_URL := postgresql+psycopg://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localh
 
 .PHONY: up
 up: start ## Start the stack, then rebuild backend/frontend whenever their files change (Ctrl+C stops watching)
-	@echo "Watching back/ and front/ for changes — Ctrl+C stops watching, containers keep running."
+	@echo "Watching backend/ and front/ for changes — Ctrl+C stops watching, containers keep running."
 	docker compose watch --no-up
 
 .PHONY: start
@@ -126,12 +127,8 @@ ps: ## Show container status
 test: test-back test-front ## Run all tests
 
 .PHONY: test-back
-test-back: .env ## Backend tests (starts the db container, creates meetings_test)
-	docker compose up -d --wait db
-	docker compose exec -T db psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -tAc \
-	  "SELECT 1 FROM pg_database WHERE datname = 'meetings_test'" | grep -q 1 || \
-	  docker compose exec -T db psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -c "CREATE DATABASE meetings_test"
-	cd backend && TEST_DATABASE_URL=$(TEST_DB_URL) uv run pytest -q
+test-back: ## Backend tests (fresh in-memory database; ignores external TEST_DATABASE_URL)
+	cd backend && uv run pytest -q
 
 .PHONY: test-front
 test-front: ## Frontend tests
@@ -141,7 +138,7 @@ test-front: ## Frontend tests
 lint: ## Code style checks (same as CI)
 	cd backend && uv run ruff check . && uv run ruff format --check .
 	cd front && npm run lint && npm run format:check && npm run typecheck
-	uvx cfn-lint infra/*.yaml
+	uvx cfn-lint infra/*.yaml infra/*.yml
 
 .PHONY: format
 format: ## Auto-format backend and frontend
@@ -151,9 +148,8 @@ format: ## Auto-format backend and frontend
 ##@ AWS backend (Lambda + Aurora Serverless v2 via CloudFormation)
 
 .PHONY: aws-check
-aws-check: ## Verify AWS credentials from .env work
-	@aws sts get-caller-identity --query '[Account, Arn]' --output text \
-	  || { echo "AWS credentials missing/invalid: set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in .env"; exit 1; }
+aws-check: ## Verify only spry-friend / 891447916595 / us-east-1; reject credential overrides
+	bash infra/scripts/aws-target.sh
 
 .PHONY: aws-backend-deploy
 aws-backend-deploy: aws-check aws-backend-ecr aws-backend-push aws-backend-stack aws-backend-migrate ## Deploy backend: ECR, image, Aurora, Lambda + function URL, migrations
@@ -162,13 +158,13 @@ aws-backend-deploy: aws-check aws-backend-ecr aws-backend-push aws-backend-stack
 	@echo "API docs: $(call backend_output,ApiDocsUrl)"
 
 .PHONY: aws-backend-ecr
-aws-backend-ecr: ## Create/update the ECR repository stack
+aws-backend-ecr: aws-check ## Create/update the ECR repository stack
 	$(call clear_failed_stack,$(BACKEND_ECR_STACK))
 	aws cloudformation deploy --stack-name $(BACKEND_ECR_STACK) --template-file infra/backend-ecr.yaml \
 	  --parameter-overrides ProjectName=$(PROJECT) --tags $(STACK_TAGS) --no-fail-on-empty-changeset
 
 .PHONY: aws-backend-login
-aws-backend-login: ## Log Docker in to ECR
+aws-backend-login: aws-check ## Log Docker in to ECR
 	@test -n "$(ECR_URI)" || { echo "ECR repository not found: run \`make aws-backend-ecr\` first (and check AWS credentials in .env)"; exit 1; }
 	aws ecr get-login-password | docker login --username AWS --password-stdin $(ECR_REGISTRY)
 
@@ -178,7 +174,7 @@ aws-backend-push: aws-backend-login ## Build the Lambda image for linux/$(ARCH) 
 	  -t $(ECR_URI):$(TAG) -t $(ECR_URI):latest --push backend
 
 .PHONY: aws-backend-stack
-aws-backend-stack: ## Create/update the backend stack (VPC, Aurora, Lambda) with image tag $(TAG); KEEP_IMAGE=1 keeps the current image
+aws-backend-stack: aws-check ## Create/update the backend stack (VPC, Aurora, Lambda) with image tag $(TAG); KEEP_IMAGE=1 keeps the current image
 	$(call clear_failed_stack,$(BACKEND_STACK))
 	@test -n "$(ECR_URI)" || { echo "ECR repository not found: run \`make aws-backend-ecr\` first (and check AWS credentials in .env)"; exit 1; }
 	@test -n "$(COGNITO_POOL_ID)" || { echo "Cognito not deployed: run \`make aws-cognito-deploy\` first"; exit 1; }
@@ -192,7 +188,7 @@ aws-backend-stack: ## Create/update the backend stack (VPC, Aurora, Lambda) with
 	    $(BACKEND_PARAMS_ARGS)
 
 .PHONY: aws-backend-migrate
-aws-backend-migrate: ## Run Alembic migrations (and seeding) inside the Lambda
+aws-backend-migrate: aws-check ## Run Alembic migrations (and seeding) inside the Lambda
 	@resp=$$(mktemp); \
 	err=$$(aws lambda invoke --function-name $(BACKEND_FUNCTION) --cli-binary-format raw-in-base64-out \
 	  --payload '{"action": "migrate"}' --cli-read-timeout 0 --query FunctionError --output text "$$resp"); \
@@ -236,7 +232,7 @@ aws-frontend-deploy: aws-check aws-frontend-stack aws-frontend-publish aws-front
 	@echo "Site: $(call frontend_output,SiteUrl)"
 
 .PHONY: aws-frontend-stack
-aws-frontend-stack: ## Create/update the frontend stack (S3, CloudFront + WAF on the Free plan, custom domain once its certificate is issued)
+aws-frontend-stack: aws-check ## Create/update the frontend stack (S3, CloudFront + WAF on the Free plan, custom domain once its certificate is issued)
 	$(call clear_failed_stack,$(FRONTEND_STACK))
 	aws cloudformation deploy --stack-name $(FRONTEND_STACK) --template-file infra/frontend.yaml \
 	  --no-fail-on-empty-changeset --tags $(STACK_TAGS) \
@@ -244,13 +240,13 @@ aws-frontend-stack: ## Create/update the frontend stack (S3, CloudFront + WAF on
 	    $(or $(FRONTEND_DOMAIN_ARGS),CertificateArn= DomainName= HostedZoneId=)
 
 .PHONY: aws-frontend-publish
-aws-frontend-publish: ## Build the SPA with VITE_API_URL=<function URL>, upload it, invalidate CloudFront
+aws-frontend-publish: aws-check ## Build the SPA with VITE_API_URL=<function URL>, upload it, invalidate CloudFront
 	@api="$(API_URL)"; bucket="$(call frontend_output,BucketName)"; dist="$(call frontend_output,DistributionId)"; \
 	[ -n "$$api" ] || { echo "Backend not deployed: run \`make aws-backend-deploy\` first"; exit 1; }; \
 	[ -n "$$bucket" ] || { echo "Frontend stack not found: run \`make aws-frontend-stack\` first"; exit 1; }; \
 	[ -n "$(COGNITO_POOL_ID)" ] || { echo "Cognito not deployed: run \`make aws-cognito-deploy\` first"; exit 1; }; \
 	echo "Building frontend with VITE_API_URL=$$api" && \
-	(cd front && npm ci --no-audit --no-fund && VITE_API_URL="$$api" \
+	(cd front && npm ci --no-audit --no-fund && VITE_API_URL="$$api" VITE_AGENDA_PARSER_URL="$(AI_URL)" \
 	  VITE_COGNITO_REGION=$(AWS_REGION) VITE_COGNITO_USER_POOL_ID=$(COGNITO_POOL_ID) \
 	  VITE_COGNITO_CLIENT_ID=$(COGNITO_CLIENT) VITE_COGNITO_DOMAIN=$(call cognito_output,HostedUiDomain) \
 	  VITE_COGNITO_GOOGLE=$(call cognito_output,GoogleEnabled) npm run build) && \
@@ -317,7 +313,7 @@ aws-cognito-deploy: aws-check aws-cognito-stack aws-cognito-env ## Deploy Cognit
 	@echo "Then: \`make up\` for local sign-in; on AWS \`make aws-deploy\` (or aws-backend-stack KEEP_IMAGE=1 + aws-frontend-publish)."
 
 .PHONY: aws-cognito-stack
-aws-cognito-stack: ## Create/update the Cognito stack (redirect URLs = local origins + the site's)
+aws-cognito-stack: aws-check ## Create/update the Cognito stack (redirect URLs = local origins + the site's)
 	$(call clear_failed_stack,$(COGNITO_STACK))
 	@# Not echoed: the command line would show the Google client secret.
 	@echo "Deploying $(COGNITO_STACK) (Google sign-in: $(if $(GOOGLE_CLIENT_ID),on,off))"

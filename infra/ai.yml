@@ -1,21 +1,54 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: Paste-an-agenda parser - a Lambda function URL outside the VPC that calls Bedrock
-
+Description: Lab 6 - authenticated Gemini parser outside the VPC; reuses existing logs and monthly budget
 Parameters:
   ProjectName:
     Type: String
-    Description: Lowercase project name (used in resource names)
   ImageUri:
     Type: String
-    Description: Backend container image URI (same image as the API)
   Architecture:
     Type: String
-    Default: x86_64
-    AllowedValues: [x86_64, arm64]
+    Default: arm64
+    AllowedValues: [arm64, x86_64]
   CorsOrigins:
     Type: CommaDelimitedList
-    Description: Browser origins allowed to call the URL (the same list the API allows)
-
+  CognitoRegion:
+    Type: String
+    Default: us-east-1
+  CognitoUserPoolId:
+    Type: String
+    MinLength: 1
+  CognitoClientId:
+    Type: String
+    MinLength: 1
+  ParserModel:
+    Type: String
+    Default: gemini-3.5-flash-lite
+    AllowedValues: [gemini-3.5-flash-lite]
+  PromptVersion:
+    Type: String
+    Default: agenda-v2-gemini
+    AllowedValues: [agenda-v2-gemini]
+  GeminiApiKeySecretArn:
+    Type: String
+    AllowedPattern: '^arn:aws:secretsmanager:us-east-1:891447916595:secret:meetings/gemini-api-key-[A-Za-z0-9]{6}$'
+    Description: Existing externally managed secret ARN only. Never pass its value to CloudFormation.
+  BillingTier:
+    Type: String
+    Default: free
+    AllowedValues: [free, paid]
+    Description: Explicit project billing assumption for cost logs; does not control Google billing.
+  ExistingBudgetName:
+    Type: String
+    Default: meetings-monthly-5usd
+    Description: Existing account budget; this stack never creates or deletes it.
+  ParserConcurrency:
+    Type: Number
+    Default: 0
+    MinValue: 0
+    MaxValue: 5
+    Description: 0 omits reservation (does not disable the function); reserve only with sufficient quota.
+Conditions:
+  ReserveConcurrency: !Not [!Equals [!Ref ParserConcurrency, 0]]
 Resources:
   AgendaParserRole:
     Type: AWS::IAM::Role
@@ -24,25 +57,20 @@ Resources:
         Version: "2012-10-17"
         Statement:
           - Effect: Allow
-            Principal: { Service: lambda.amazonaws.com }
+            Principal: {Service: lambda.amazonaws.com}
             Action: sts:AssumeRole
       ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
       Policies:
-        - PolicyName: call-bedrock
+        - PolicyName: read-gemini-api-key
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
-              # "*" for now; narrowing it to one model is a discussion question.
               - Effect: Allow
-                Action: bedrock-mantle:CreateInference     # Anthropic Messages API
-                Resource: "*"
-              - Effect: Allow
-                Action: [bedrock:InvokeModel, bedrock:InvokeModelWithResponseStream]  # Converse API
-                Resource: "*"
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref GeminiApiKeySecretArn
       Tags:
-        - { Key: PROJECT_NAME, Value: !Ref ProjectName }
-
+        - {Key: PROJECT_NAME, Value: !Ref ProjectName}
   AgendaParserFunction:
     Type: AWS::Lambda::Function
     Properties:
@@ -52,26 +80,36 @@ Resources:
       Code:
         ImageUri: !Ref ImageUri
       ImageConfig:
-        Command: ["app.ai.agenda_lambda.handler"]
+        Command: [app.ai.agenda_lambda.handler]
       Role: !GetAtt AgendaParserRole.Arn
-      Timeout: 30
       MemorySize: 512
-      # No VpcConfig: this function needs no database.
-      # Environment (Cognito settings, PARSER_*) is set by infra/scripts/ai-deploy.sh.
+      Timeout: 30
+      ReservedConcurrentExecutions: !If [ReserveConcurrency, !Ref ParserConcurrency, !Ref AWS::NoValue]
+      LoggingConfig:
+        LogGroup: !Sub /aws/lambda/${ProjectName}-agenda-parser
+      Environment:
+        Variables:
+          COGNITO_REGION: !Ref CognitoRegion
+          COGNITO_USER_POOL_ID: !Ref CognitoUserPoolId
+          COGNITO_CLIENT_ID: !Ref CognitoClientId
+          PARSER_REGION: us-east-1
+          PARSER_MOCK: "0"
+          PARSER_MODEL: !Ref ParserModel
+          PARSER_PROMPT_VERSION: !Ref PromptVersion
+          GEMINI_API_KEY_SECRET_ARN: !Ref GeminiApiKeySecretArn
+          PARSER_BILLING_TIER: !Ref BillingTier
       Tags:
-        - { Key: PROJECT_NAME, Value: !Ref ProjectName }
-
+        - {Key: PROJECT_NAME, Value: !Ref ProjectName}
   AgendaParserUrl:
     Type: AWS::Lambda::Url
     Properties:
       TargetFunctionArn: !GetAtt AgendaParserFunction.Arn
-      AuthType: NONE          # the handler verifies the Cognito token itself
+      AuthType: NONE
       Cors:
         AllowOrigins: !Ref CorsOrigins
         AllowMethods: [POST]
         AllowHeaders: [content-type, authorization]
         MaxAge: 600
-
   UrlInvokeUrlPermission:
     Type: AWS::Lambda::Permission
     Properties:
@@ -79,7 +117,6 @@ Resources:
       Action: lambda:InvokeFunctionUrl
       Principal: "*"
       FunctionUrlAuthType: NONE
-
   UrlInvokePermission:
     Type: AWS::Lambda::Permission
     Properties:
@@ -87,9 +124,11 @@ Resources:
       Action: lambda:InvokeFunction
       Principal: "*"
       InvokedViaFunctionUrl: true
-
 Outputs:
   ParserUrl:
     Value: !GetAtt AgendaParserUrl.FunctionUrl
   FunctionName:
     Value: !Ref AgendaParserFunction
+  ExistingBudget:
+    Description: Referenced existing budget; no budget resources are managed by this stack.
+    Value: !Ref ExistingBudgetName

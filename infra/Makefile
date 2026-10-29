@@ -1,2 +1,1 @@
-   llm-hello:
-   	cd backend && PARSER_MODEL=$${PARSER_MODEL:-anthropic.claude-opus-5-5} python scripts/llm_hello.py
+# Run Lab 6 targets from the repository root: make llm-hello / make parse TEXT="...".

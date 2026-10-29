@@ -60,9 +60,8 @@ else CREATE_ID=true; fi
 status=$(aws cloudformation describe-stacks --stack-name "$STACK" \
   --query 'Stacks[0].StackStatus' --output text 2>/dev/null || true)
 if [ "$status" = ROLLBACK_COMPLETE ]; then
-  echo "Stack $STACK is in ROLLBACK_COMPLETE after a failed create; deleting it first"
-  aws cloudformation delete-stack --stack-name "$STACK"
-  aws cloudformation wait stack-delete-complete --stack-name "$STACK"
+  echo "Stack $STACK is in ROLLBACK_COMPLETE after a failed create; recovery needs review"
+  echo "Inspect the failed stack and approve cleanup separately. No deletion performed."; exit 1
 fi
 
 echo "VPC=$VPC_ID subnets=$SUBNETS sg=$SGS routetables=$RTBS"

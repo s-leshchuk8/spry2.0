@@ -1,0 +1,36 @@
+{
+  "account": "891447916595",
+  "region": "us-east-1",
+  "model": "us.amazon.nova-micro-v1:0",
+  "quotas": [
+    {
+      "QuotaName": "Cross-region model inference tokens per minute for Amazon Nova Micro",
+      "QuotaCode": "L-DC7FF66C",
+      "Value": 0.0,
+      "Adjustable": true,
+      "QuotaAppliedAtLevel": "ACCOUNT",
+      "QuotaContext": null
+    },
+    {
+      "QuotaName": "Cross-region model inference requests per minute for Amazon Nova Micro",
+      "QuotaCode": "L-3F110E0F",
+      "Value": 0.0,
+      "Adjustable": false,
+      "QuotaAppliedAtLevel": "ACCOUNT",
+      "QuotaContext": null
+    },
+    {
+      "QuotaName": "Model invocation max tokens per day for Amazon Nova Micro (doubled for cross-region calls)",
+      "QuotaCode": "L-D2912E70",
+      "Value": 0.0,
+      "Adjustable": false,
+      "QuotaAppliedAtLevel": "ACCOUNT",
+      "QuotaContext": null
+    }
+  ],
+  "recent_bedrock_throttles": 3,
+  "recent_lambda_throttles": 0,
+  "inference_profile_status": "ACTIVE",
+  "model_authorization": "AUTHORIZED",
+  "existing_cross_region_tpm_requests": []
+}

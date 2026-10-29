@@ -1,117 +1,134 @@
-"""agenda-parser Lambda (outside the VPC): pasted text in, SUGGESTED agenda out.
+"""Public Function URL handler: authenticate, parse, return a suggestion; never save."""
 
-It never touches the database and never writes anything. Saving goes through the normal API.
-Image command: app.ai.agenda_lambda.handler
-
-PARSER_MOCK=1 returns a fixed sample agenda WITHOUT calling any model. It exists only to test
-the Lambda, auth, CORS and the screen while model access is pending; the response and the log
-line say model="mock", so it can never be mistaken for a real parse.
-"""
 import base64
 import json
 import logging
-import os
 import time
 from datetime import date
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import HTTPException
 
-from app.ai.agenda import (PROMPT_VERSION, ActionItem, AgendaItem, AgendaParseError,
-                           ParsedAgenda, model_id, parse_agenda, provider)
+from app.ai.agenda import PROMPT_VERSION, AgendaParseError, cost_usd, parse_agenda
+from app.ai.contracts import AgendaItem, ParsedAgenda
 from app.auth import verify_id_token
 from app.config import settings
 
-log = logging.getLogger()
+log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
-
 MAX_CHARS = 10_000
 
-# USD per 1M tokens (input, output). Check the Bedrock pricing page: the bill is what counts.
-PRICES = {
-    "opus-5-5": (4.00, 20.00),
-    "sonnet-5-5": (2.00, 10.00),
-    "haiku-5-5": (0.10, 0.50),
-    "nova-micro": (0.035, 0.14),
-    "nova-lite": (0.06, 0.24),
-    "nova-pro": (0.80, 3.20),
-}
 
-
-def cost_usd(model: str, usage: dict) -> float | None:
-    for key, (price_in, price_out) in PRICES.items():
-        if key in model:
-            return round((usage["input_tokens"] * price_in + usage["output_tokens"] * price_out) / 1_000_000, 6)
-    return None
-
-
-def _resp(status: int, body: dict) -> dict:
-    return {"statusCode": status, "headers": {"content-type": "application/json"},
-            "body": json.dumps(body, ensure_ascii=False)}
-
-
-def _mock_agenda() -> ParsedAgenda:
-    return ParsedAgenda(
-        title="Pricing sync (MOCK)", language="uk", duration_minutes=45,
-        items=[AgendaItem(topic="Нові тарифи Pro", owner="Олена", minutes=15),
-               AgendaItem(topic="Фідбек від клієнтів", owner="Taras"),
-               AgendaItem(topic="Що робимо з річною знижкою")],
-        action_items=[ActionItem(task="Зібрати порівняння з конкурентами", owner="Taras")],
-    )
+def response(status: int, error: str, detail: str | None = None):
+    return {
+        "statusCode": status,
+        "headers": {"content-type": "application/json"},
+        "body": json.dumps({"error": error, "detail": detail or error}),
+    }
 
 
 def handler(event, context):
-    # 1. Authentication: every call costs money.
-    if not settings.auth_enabled:
-        return _resp(500, {"error": "auth_not_configured"})
-    token = (event.get("headers") or {}).get("authorization", "")
-    token = token[7:] if token.lower().startswith("bearer ") else token
+    # URL-level CORS handles preflight. Application rejects every non-POST request.
+    if event.get("requestContext", {}).get("http", {}).get("method") != "POST":
+        return response(405, "method_not_allowed")
+    headers = {k.lower(): v for k, v in (event.get("headers") or {}).items()}
+    auth = headers.get("authorization", "")
+    if not settings.auth_enabled or not auth.lower().startswith("bearer "):
+        return response(401, "unauthorized", "Sign in to parse an agenda")
     try:
-        user = verify_id_token(token.strip())
+        user = verify_id_token(auth[7:].strip())
     except HTTPException:
-        return _resp(401, {"error": "unauthorized"})
-    except Exception:  # e.g. the signing keys could not be loaded
-        log.exception("token verification failed")
-        return _resp(500, {"error": "auth_error"})
-
-    # 2. Input and limits.
+        return response(401, "unauthorized", "Your session has expired; sign in again")
+    except Exception:
+        return response(503, "auth_unavailable", "Authentication is temporarily unavailable")
     try:
-        raw = event.get("body") or "{}"
+        raw = event.get("body") or ""
         if event.get("isBase64Encoded"):
-            raw = base64.b64decode(raw).decode("utf-8")
+            raw = base64.b64decode(raw, validate=True).decode("utf-8")
         body = json.loads(raw)
-        text, today, tz = body["text"], date.fromisoformat(body["today"]), str(body["tz"])
-        if not isinstance(text, str) or not text.strip():
-            raise ValueError("empty text")
-    except (KeyError, ValueError, TypeError):
-        return _resp(400, {"error": "bad_request",
-                           "detail": 'expected JSON {"text": "...", "today": "YYYY-MM-DD", "tz": "Europe/Kyiv"}'})
-    if len(text) > MAX_CHARS:
-        return _resp(413, {"error": "text_too_long", "max_chars": MAX_CHARS})
+        if not isinstance(body, dict):
+            raise ValueError
+        text, day, tz = body["text"], body["today"], body["tz"]
+        if not all(isinstance(v, str) for v in (text, day, tz)) or not text.strip():
+            raise ValueError
+        if len(text) > MAX_CHARS:
+            return response(413, "text_too_long", "Paste at most 10,000 characters")
+        today = date.fromisoformat(day)
+        if today.isoformat() != day:
+            raise ValueError
+        ZoneInfo(tz)
+    except (KeyError, ValueError, TypeError, UnicodeError, ZoneInfoNotFoundError):
+        return response(400, "bad_request", "Expected text, YYYY-MM-DD today, and an IANA timezone")
 
-    # 3. Parse (or the clearly labelled mock).
-    mock = os.environ.get("PARSER_MOCK") == "1"
-    model = "mock" if mock else model_id()
+    model = "mock" if settings.parser_mock else settings.PARSER_MODEL
     started = time.monotonic()
+    usage = {"input_tokens": 0, "output_tokens": 0}
+    outcome = "success"
     try:
-        if mock:
-            agenda, usage = _mock_agenda(), {"input_tokens": 0, "output_tokens": 0}
+        if settings.parser_mock:
+            agenda = ParsedAgenda(
+                title="LOCAL MOCK — review manually",
+                language="en",
+                items=[AgendaItem(topic="MOCK sample topic")],
+            )
         else:
             agenda, usage = parse_agenda(text, today, tz)
-    except AgendaParseError as e:
-        return _resp(422, {"error": str(e)})
-    except Exception as e:  # throttling, access denied, network ...
-        busy = "Throttl" in type(e).__name__ or "RateLimit" in type(e).__name__ \
-            or getattr(e, "status_code", None) == 429
-        log.exception("model call failed")
-        return _resp(429 if busy else 502, {"error": "busy" if busy else "model_error"})
-
-    # 4. One JSON log line per parse (item 4 of the submission).
-    log.info(json.dumps({
-        "event": "agenda_parsed", "user": user.sub, "provider": "mock" if mock else provider(),
-        "model": model, "prompt_version": PROMPT_VERSION, **usage,
-        "latency_ms": int((time.monotonic() - started) * 1000), "cost_usd": cost_usd(model, usage),
-    }, ensure_ascii=False))
-    out = {"agenda": agenda.model_dump(mode="json"), "model": model, "prompt_version": PROMPT_VERSION}
-    if mock:
-        out["mock"] = True
-    return _resp(200, out)
+        result = {
+            "statusCode": 200,
+            "headers": {"content-type": "application/json"},
+            "body": json.dumps(
+                {
+                    "agenda": agenda.model_dump(mode="json"),
+                    "model": model,
+                    "prompt_version": PROMPT_VERSION,
+                    **({"mock": True} if settings.parser_mock else {}),
+                },
+                ensure_ascii=False,
+            ),
+        }
+    except AgendaParseError as exc:
+        usage, outcome = exc.usage, "invalid_agenda"
+        result = response(422, outcome, "Could not find a valid agenda. Edit the text or enter it manually")
+    except Exception as exc:
+        usage = getattr(exc, "agenda_usage", usage)
+        provider = getattr(exc, "response", {})
+        provider_code = provider.get("Error", {}).get("Code", "")
+        status = provider.get("ResponseMetadata", {}).get("HTTPStatusCode", getattr(exc, "status_code", None))
+        if status == 429 or provider_code in ("ThrottlingException", "TooManyRequestsException"):
+            outcome, code = "busy", 429
+        elif (
+            status in (408, 500, 502, 503, 504)
+            or provider_code
+            in ("ServiceUnavailableException", "InternalServerException", "ModelTimeoutException")
+            or "Timeout" in type(exc).__name__
+            or "Connection" in type(exc).__name__
+        ):
+            outcome, code = "unavailable", 503
+        elif provider_code == "AccessDeniedException" or status == 403:
+            outcome, code = "model_access_denied", 502
+        else:
+            outcome, code = "model_error", 502
+        result = response(
+            code, outcome, "Parsing service is unavailable. Try again or enter the agenda manually"
+        )
+    finally:
+        try:
+            cost = 0.0 if settings.parser_mock else cost_usd(model, usage)
+        except KeyError:
+            cost = None
+        log.info(
+            json.dumps(
+                {
+                    "event": "agenda_parsed",
+                    "user": user.sub,
+                    "model": model,
+                    "prompt_version": PROMPT_VERSION,
+                    **usage,
+                    "latency_ms": int((time.monotonic() - started) * 1000),
+                    "cost_usd": cost,
+                    "billing_tier": settings.parser_billing_tier,
+                    "outcome": outcome,
+                }
+            )
+        )
+    return result

@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
+  readonly VITE_AGENDA_PARSER_URL?: string
   /** Backend base URL, e.g. https://abc.lambda-url.us-east-1.on.aws (empty: same origin). */
   readonly VITE_API_URL?: string
   /** Cognito user pool settings; no client ID = auth disabled (local development). */

@@ -1,57 +1,31 @@
-# Lab 6 - LLM features on Amazon Bedrock. Included from the main Makefile with:  -include Makefile.ai
-# Optional in .env:
-#   PARSER_PROVIDER=anthropic|converse     (default anthropic)
-#   PARSER_MODEL=amazon.nova-lite-v1:0
-#   PARSER_EFFORT=low|medium               (Claude only)
-#   PARSER_MOCK=1                          (fixed sample answer, NO model call; testing only)
+# Lab 6. parse-test is offline. Live Gemini calls need approval; use the hidden-input helper.
+AI_STACK := $(PROJECT)-ai
+AI_URL = $(call stack_output,$(AI_STACK),ParserUrl)
+AI_SCRIPT_ENV = PROJECT=$(PROJECT) BACKEND_FUNCTION=$(BACKEND_FUNCTION) AI_LAMBDA_ARCH=$(LAMBDA_ARCH) \
+ PARSER_MODEL="$(or $(PARSER_MODEL),gemini-3.5-flash-lite)" \
+ PARSER_PROMPT_VERSION="$(or $(PARSER_PROMPT_VERSION),agenda-v2-gemini)" PARSER_BILLING_TIER="$(or $(PARSER_BILLING_TIER),free)" \
+ GEMINI_API_KEY_SECRET_ARN="$(GEMINI_API_KEY_SECRET_ARN)" \
+ PARSER_CONCURRENCY="$(or $(PARSER_CONCURRENCY),0)" EXISTING_BUDGET_NAME="$(or $(EXISTING_BUDGET_NAME),meetings-monthly-5usd)"
 
-AI_STACK      := $(PROJECT)-ai
-AI_URL         = $(call stack_output,$(AI_STACK),ParserUrl)
-AI_SCRIPT_ENV  = PROJECT=$(PROJECT) BACKEND_FUNCTION=$(BACKEND_FUNCTION) AI_LAMBDA_ARCH=$(LAMBDA_ARCH) \
-	             PARSER_PROVIDER="$(PARSER_PROVIDER)" PARSER_MODEL="$(PARSER_MODEL)" \
-	             PARSER_EFFORT="$(PARSER_EFFORT)" PARSER_MOCK="$(PARSER_MOCK)"
+.PHONY: llm-hello parse parse-test ai-deploy ai-config ai-url ai-logs
+llm-hello: ## Hidden-key prompt; one Gemini test only after explicit terminal confirmation
+	cd backend && PYTHONPATH=. uv run python scripts/llm_hello.py
 
-##@ AI (Bedrock)
+parse: ## Live Gemini parse via configured Secrets Manager ARN (approval required)
+	@test -n "$(TEXT)" || { echo 'Set TEXT to the agenda'; exit 1; }
+	cd backend && PYTHONPATH=. uv run python scripts/parse.py "$$TEXT"
 
-.PHONY: llm-models
-llm-models: ## Which Claude / Nova models and inference profiles can this account see in us-east-1?
-	aws bedrock list-foundation-models --region us-east-1 --query "modelSummaries[?contains(modelId,'claude')||contains(modelId,'nova')].modelId" --output text | tr '\t' '\n'
-	@echo "--- inference profiles ---"
-	aws bedrock list-inference-profiles --region us-east-1 --query "inferenceProfileSummaries[?contains(inferenceProfileId,'claude')||contains(inferenceProfileId,'nova')].inferenceProfileId" --output text | tr '\t' '\n'
+parse-test: ## Offline parser and handler tests (no AWS)
+	cd backend && uv run pytest tests/test_agenda.py tests/test_agenda_lambda.py -q
 
-.PHONY: llm-hello
-llm-hello: ## First call to a model on Bedrock; prints the answer, stop_reason and token usage
-	cd backend && uv run python scripts/llm_hello.py
-
-.PHONY: parse-test
-parse-test: ## Offline checks of the parser logic (no AWS)
-	cd backend && PYTHONPATH=. uv run python scripts/test_agenda_offline.py
-
-.PHONY: ai-deploy
-ai-deploy: aws-check aws-backend-push ## Build+push the image, deploy the parser Lambda + URL (use ARCH=amd64 on a PC)
+ai-deploy: aws-check aws-backend-push ## Build/push and preview parser change set (AWS writes; approval required)
 	$(AI_SCRIPT_ENV) AI_IMAGE_URI=$(ECR_URI):$(TAG) bash infra/scripts/ai-deploy.sh
 
-.PHONY: ai-config
-ai-config: aws-check ## Re-deploy with the image already in use (after changing PARSER_* in .env)
-	$(AI_SCRIPT_ENV) bash infra/scripts/ai-deploy.sh
+ai-config: aws-check ## Preview parser configuration with explicit TAG/image (requires approval)
+	$(AI_SCRIPT_ENV) AI_IMAGE_URI=$(ECR_URI):$(TAG) bash infra/scripts/ai-deploy.sh
 
-.PHONY: ai-url
-ai-url: ## Print the parser's function URL
+ai-url: ## Print parser Function URL
 	@echo "$(AI_URL)"
 
-.PHONY: ai-logs
-ai-logs: ## Last 15 minutes of the parser's logs
+ai-logs: ## Read recent parser log messages
 	$(AWS_SHELL) logs tail /aws/lambda/$(PROJECT)-agenda-parser --since 15m
-
-.PHONY: ai-check
-ai-check: ## The URL must reject a call without a token (expect 401)
-	@curl -sS -i -X POST "$(AI_URL)" -H "content-type: application/json" --data '{"text":"x"}' | sed -n '1p;$$p'
-
-.PHONY: ai-call
-ai-call: ## Call the deployed parser: make ai-call TOKEN=<Cognito ID token> TEXT="..."
-	@test -n "$(TOKEN)" -a -n "$(TEXT)" || { echo 'Usage: make ai-call TOKEN=<id token> TEXT="..."'; exit 1; }
-	@curl -sS -X POST "$(AI_URL)" -H "authorization: Bearer $(TOKEN)" -H "content-type: application/json" \
-	  --data "$$(python3 -c 'import json,os,datetime; print(json.dumps({"text": os.environ["TEXT"], "today": datetime.date.today().isoformat(), "tz": "Europe/Kyiv"}))')"
-
-parse:
-	cd backend && PYTHONPATH=. uv run python scripts/parse.py "$(TEXT)"

@@ -43,7 +43,7 @@ def _load_participants(db: Session, participant_ids: list[UUID]) -> list[Partici
     if missing:
         ids = ", ".join(sorted(str(m) for m in missing))
         raise NotFoundError(f"Participants not found: {ids}")
-    return participants
+    return sorted(participants, key=lambda participant: participant.name)
 
 
 def _apply(meeting: Meeting, data: MeetingCreate, participants: list[Participant]) -> None:

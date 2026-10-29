@@ -30,3 +30,28 @@ def inline_refs(schema: dict) -> dict:
         return out
 
     return walk(schema)
+
+
+def gemini_schema(schema: dict) -> dict:
+    """Gemini JSON Schema subset: inline refs, retain nullability and explicit property order."""
+    definitions = schema.get("$defs", {})
+
+    def walk(node):
+        if isinstance(node, list):
+            return [walk(value) for value in node]
+        if not isinstance(node, dict):
+            return node
+        if "$ref" in node:
+            return walk(definitions[node["$ref"].rsplit("/", 1)[-1]])
+        result = {}
+        for key, value in node.items():
+            if key in {"$defs", "default", "minLength"}:
+                continue  # Pydantic still enforces minLength locally.
+            result[key] = (
+                {name: walk(prop) for name, prop in value.items()} if key == "properties" else walk(value)
+            )
+        if "properties" in result:
+            result["propertyOrdering"] = list(result["properties"])
+        return result
+
+    return walk(schema)

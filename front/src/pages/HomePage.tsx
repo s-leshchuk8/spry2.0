@@ -1,6 +1,7 @@
 import { useState } from "react"
 import { toast } from "sonner"
 
+import { AgendaDialog } from "@/components/AgendaDialog"
 import { BackToTop } from "@/components/BackToTop"
 import { DeleteMeetingDialog } from "@/components/DeleteMeetingDialog"
 import { MeetingFormDialog } from "@/components/MeetingFormDialog"
@@ -15,6 +16,7 @@ import type { Meeting } from "@/types"
 export function HomePage() {
   const { data: meetings, isPending, isError, error, refetch } = useMeetings()
   const deleteMeeting = useDeleteMeeting()
+  const [agendaMeeting, setAgendaMeeting] = useState<Meeting | null>(null)
   const [formOpen, setFormOpen] = useState(false)
   const [formStart, setFormStart] = useState<Date | undefined>()
   const [editing, setEditing] = useState<Meeting | null>(null)
@@ -66,6 +68,7 @@ export function HomePage() {
           ) : (
             <MeetingsCalendar
               meetings={meetings}
+              onAgenda={setAgendaMeeting}
               onEdit={openEdit}
               onDelete={setPendingDelete}
               onCreateAt={openForm}
@@ -77,6 +80,13 @@ export function HomePage() {
       <SiteFooter />
       <BackToTop />
 
+      {agendaMeeting && (
+        <AgendaDialog
+          key={agendaMeeting.id}
+          meeting={agendaMeeting}
+          onClose={() => setAgendaMeeting(null)}
+        />
+      )}
       <MeetingFormDialog
         open={formOpen}
         onOpenChange={setFormOpen}

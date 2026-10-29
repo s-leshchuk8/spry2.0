@@ -1,65 +1,73 @@
-name: CI/CD Pipeline
-
+name: Manual application deployment
+# Infrastructure/model calls and migrations remain separately approved operations.
 on:
-  push:
-    branches: [ main, master ]
-
+  workflow_dispatch:
+permissions:
+  contents: read
 jobs:
   deploy-frontend:
     runs-on: ubuntu-latest
+    environment: aws-deployment
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v3
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 20
-
-      - name: Install and Build Frontend
+          node-version: 24
+          cache: npm
+          cache-dependency-path: front/package-lock.json
+      - name: Validate deployment configuration
+        env:
+          API: ${{ vars.VITE_API_URL }}
+          PARSER: ${{ vars.VITE_AGENDA_PARSER_URL }}
+          CLIENT: ${{ vars.COGNITO_CLIENT_ID }}
+          BUCKET: ${{ vars.FRONTEND_BUCKET }}
+        run: test -n "$API" && test -n "$PARSER" && test -n "$CLIENT" && test -n "$BUCKET"
+      - name: Test and build
+        working-directory: front
         run: |
-          cd front
-          npm install
+          npm ci --no-audit --no-fund
+          npm test
           npm run build
         env:
-          VITE_API_URL: ${{ secrets.VITE_API_URL }}
-
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v2
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+          VITE_AGENDA_PARSER_URL: ${{ vars.VITE_AGENDA_PARSER_URL }}
+          VITE_COGNITO_REGION: ${{ vars.COGNITO_REGION || 'us-east-1' }}
+          VITE_COGNITO_CLIENT_ID: ${{ vars.COGNITO_CLIENT_ID }}
+          VITE_COGNITO_DOMAIN: ${{ vars.COGNITO_DOMAIN }}
+          VITE_COGNITO_GOOGLE: ${{ vars.COGNITO_GOOGLE_ENABLED }}
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: eu-central-1
-
-      - name: Deploy Frontend to S3
-        run: |
-          aws s3 sync front/dist s3://spry2-frontend-solosun0308 --delete
-
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+      - name: Publish frontend
+        env:
+          BUCKET: ${{ vars.FRONTEND_BUCKET }}
+        run: aws s3 sync front/dist "s3://$BUCKET"
   deploy-backend:
     runs-on: ubuntu-latest
+    environment: aws-deployment
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v2
+      - uses: actions/checkout@v4
+      - name: Validate deployment configuration
+        env:
+          ECR_URI: ${{ vars.BACKEND_ECR_URI }}
+          FUNCTION: ${{ vars.BACKEND_FUNCTION }}
+        run: test -n "$ECR_URI" && test -n "$FUNCTION"
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: eu-central-1
-
-      - name: Log in to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v1
-
-      - name: Build and Push Lambda Docker Image
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+      - uses: aws-actions/amazon-ecr-login@v2
+      - uses: docker/setup-buildx-action@v3
+      - name: Build and publish API image
+        env:
+          ECR_URI: ${{ vars.BACKEND_ECR_URI }}
+          FUNCTION: ${{ vars.BACKEND_FUNCTION }}
+          PLATFORM: ${{ vars.BACKEND_PLATFORM || 'linux/arm64' }}
         run: |
-          docker build -f ./back/Dockerfile.lambda -t spry-backend-lambda ./back
-          docker tag spry-backend-lambda:latest 891447916595.dkr.ecr.eu-central-1.amazonaws.com/spry-backend:lambda
-          docker push 891447916595.dkr.ecr.eu-central-1.amazonaws.com/spry-backend:lambda
-
-      - name: Update Lambda Function Code
-        run: |
-          aws lambda update-function-code \
-            --function-name spry-backend \
-            --image-uri 891447916595.dkr.ecr.eu-central-1.amazonaws.com/spry-backend:lambda
+          docker buildx build --platform "$PLATFORM" --provenance=false -f backend/Dockerfile.lambda -t "$ECR_URI:$GITHUB_SHA" --push backend
+          aws lambda update-function-code --function-name "$FUNCTION" --image-uri "$ECR_URI:$GITHUB_SHA"
