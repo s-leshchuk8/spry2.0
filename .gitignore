@@ -10,3 +10,8 @@ dist/
 
 # AWS app-stack overrides (may hold account-specific values)
 infra/*.params.env
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
