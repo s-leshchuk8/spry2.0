@@ -1,0 +1,8 @@
+flowchart LR
+ A[Local JSONL dataset] --> B[Python boto3 producer]
+ B --> C[Amazon Kinesis Data Streams]
+ C --> D[Amazon Data Firehose delivery stream]
+ D --> E[(S3 streamed/ raw JSONL)]
+ E --> F[Glue Data Catalog table]
+ F --> G[Athena SQL query]
+ G --> H[Query result screenshot]
